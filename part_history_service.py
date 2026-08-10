@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, request
-import requests
+import jwt
 import json
 import os
 import uuid
@@ -8,8 +8,8 @@ app = Flask(__name__)
 
 HISTORY_FILE = "parts_history.json"
 
-AUTH_SERVICE_URL = os.environ.get('AUTH_SERVICE_URL', "http://localhost:5001")
-AUTH_VERIFY_ENDPOINT = f"{AUTH_SERVICE_URL}/verify"
+JWT_SECRET = os.environ.get('JWT_SECRET', 'cs361-demo-secret')
+JWT_ALGORITHM = 'HS256'
 
 def load_history():
     '''Load parts history file into a dict: { user_id: [ {saved_part}, ... ] }'''
@@ -30,27 +30,22 @@ def get_authenticated_user():
     '''
     Pulls the bearer token from authorization header and ask Auth service to verify it
     '''
-    auth_header = request.headers.get('Authorization')
+    auth_header = request.headers.get('Authorization', '')
     if not auth_header.startswith('Bearer '):
         return None
 
     token = auth_header.split(" ", 1)[1]
 
     try:
-        response = requests.post(
-            AUTH_VERIFY_ENDPOINT,
-            json={"token": token},
-            timeout=5,
-        )
-    except requests.exceptions.RequestException:
-        # Auth service unreachable - failed closed
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError:
+        # Covers expired, malformed, or bad signature tokens
         return None
 
-    if response.status_code != 200:
+    if payload.get('type') != 'access':
         return None
 
-    body = response.json()
-    return body.get("user_id")
+    return payload.get('sub')
 
 @app.route('/history', methods=['GET'])
 def list_saved_parts():
@@ -99,8 +94,8 @@ def save_part():
         'id': str(uuid.uuid4()),
         'part_id': payload["part_id"],
         'name': payload["name"],
-        'price': payload["price"],
-        'model': payload["model", ""]
+        'price': payload.get("price"),
+        'model': payload.get("model", "")
     }
     user_history.append(saved_part)
     save_history(history)
